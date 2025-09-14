@@ -1,0 +1,23 @@
+[project]
+name = "playground"
+version = "0.1.0"
+requires-python = ">=3.10"
+# パッケージは src 配下の "playground"
+# setuptools自動探索を使う場合:
+# [tool.setuptools.packages.find]
+# where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[project.scripts]        # 便利：インストール後 'play-cli' で起動
+play-cli = "playground.cli:main"
