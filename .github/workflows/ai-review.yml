@@ -1,0 +1,23 @@
+name: AI PR Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write    # PRにコメントするため
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # 差分取得のため全履歴 or 十分な深さを取得
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run AI review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 既定で用意されている自動トークン
+        run: python py/scripts/ai_review.py

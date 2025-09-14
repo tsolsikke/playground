@@ -38,7 +38,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: py-results
-          path: ../data/results/**/*
+          path: ${{ github.workspace }}/data/results/**
           if-no-files-found: ignore
 
   c:
