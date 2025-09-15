@@ -35,7 +35,9 @@ def write_line(s: str, stream: Optional[TextIO] = None, *, flush: bool = False) 
         out.flush()
 
 
-def print_flush(*args, sep: str = " ", end: str = "\n", stream: Optional[TextIO] = None) -> None:
+def print_flush(
+    *args, sep: str = " ", end: str = "\n", stream: Optional[TextIO] = None
+) -> None:
     """
     print の薄いラッパ：即時 flush を保証。
     """
@@ -70,7 +72,9 @@ def read_ints(stream: Optional[TextIO] = None) -> List[int]:
     return read_ints_from_line(line)
 
 
-def echo_stream(src: TextIO, dst: Optional[TextIO] = None, *, count_bytes: bool = False) -> int:
+def echo_stream(
+    src: TextIO, dst: Optional[TextIO] = None, *, count_bytes: bool = False
+) -> int:
     """
     入力ストリームをそのまま出力へコピー。
     戻り値はデフォルトで「文字数」。count_bytes=True のときは UTF-8 バイト数。
@@ -110,7 +114,9 @@ def read_csv_rows(
     return rows
 
 
-def write_lines(lines: Sequence[str], stream: Optional[TextIO] = None, *, flush: bool = False) -> None:
+def write_lines(
+    lines: Sequence[str], stream: Optional[TextIO] = None, *, flush: bool = False
+) -> None:
     """
     シーケンスの各要素を1行ずつ書き出す（末尾に改行付与）。
     """
