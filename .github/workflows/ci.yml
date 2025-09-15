@@ -49,20 +49,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      # デバッグ：本当に c/ があるか確認
-      - name: Show workspace
+      - name: Show workspace (debug)
         run: |
+          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
           pwd
+          echo "== ls -la =="
           ls -la
-          ls -la c || true
+          echo "== git ls-tree HEAD =="
+          git ls-tree --name-only HEAD
+
+      # ここで存在確認。なければ早期終了してログを見やすく
+      - name: Ensure c/ exists
+        run: |
+          if [ ! -d "$GITHUB_WORKSPACE/c" ]; then
+            echo "::error::c/ directory not found at $GITHUB_WORKSPACE"
+            exit 1
+          fi
 
       - name: Build (make)
-        working-directory: c
-        run: make
+        run: make -C c
 
       - name: Run C tests
-        working-directory: c
-        run: make test
+        run: make -C c test
 
       - name: Upload C results (if any)
         if: always()
