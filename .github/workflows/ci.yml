@@ -46,17 +46,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # デバッグ：本当に c/ があるか確認
+      - name: Show workspace
+        run: |
+          pwd
+          ls -la
+          ls -la c || true
 
       - name: Build (make)
-        run: make -C c
+        working-directory: c
+        run: make
 
       - name: Run C tests
-        run: make -C c test
+        working-directory: c
+        run: make test
 
       - name: Upload C results (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: c-results
-          path: data/results/**/*
+          path: ${{ github.workspace }}/data/results/**
           if-no-files-found: ignore
