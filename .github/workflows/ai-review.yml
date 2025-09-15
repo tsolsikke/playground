@@ -1,23 +1,172 @@
-name: AI PR Review
+# .github/workflows/ai-pr-review.yml
+name: AI PR Review (JP)
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    # 対象ファイルを絞る（不要なら削除）
+    paths:
+      - "**/*.py"
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.cpp"
+      - "**/*.hpp"
+      - "**/pyproject.toml"
+      - "**/requirements*.txt"
+      - "**/Makefile"
+      - ".github/workflows/*.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   review:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write    # PRにコメントするため
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install jq (for JSON handling)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Build unified diff and file list
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ベースとの差分を取得
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          git diff --unified=0 origin/${{ github.base_ref }}...HEAD > pr.diff || true
+          # 変更ファイル一覧（スペース区切り）
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | tr '\n' ' ')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+          # 大きすぎる差分はトークン節約のため切り詰め
+          # （必要なら増減：51200=約50KB）
+          head -c 51200 pr.diff > pr_trunc.diff
+
+          # もしレビュー対象がなければフラグを立てる
+          if [ ! -s pr.diff ]; then
+            echo "empty_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "empty_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if no relevant changes
+        if: steps.diff.outputs.empty_diff == 'true'
+        uses: actions/github-script@v7
         with:
-          fetch-depth: 0      # 差分取得のため全履歴 or 十分な深さを取得
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Run AI review
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: "AIレビュー: 対象となるコード差分が見つかりませんでした（ドキュメントのみ等）。"
+            });
+
+      - name: Prepare prompt (Japanese)
+        if: steps.diff.outputs.empty_diff != 'true'
+        id: prompt
+        shell: bash
+        run: |
+          set -euo pipefail
+          # レビューポリシー（日本語）。必要に応じて編集可。
+          cat > prompt.txt <<'EOP'
+あなたは熟練のソフトウェアレビュアです。以下の「PRの差分（unified diff）」を読み、**日本語**でレビューを出力してください。
+
+# 出力フォーマット（Markdown）
+- 最初に短い **概要**（何を直すべきか3～6行）
+- 次に **重要度ラベル付きの指摘リスト**
+  - ラベルは `BLOCKER` / `MAJOR` / `MINOR` / `NICE` のいずれか
+  - 各指摘は **箇条書き** で、できるだけ `path:line`（例: `c/src/p003_io.c:42`）を明示
+  - 具体的な **根拠・理由**、**代替案**、**参考コード断片（短く）** を添付
+- **セキュリティ/安全性**（バッファオーバーフロー、メモリリーク、パストラバーサル、コマンドインジェクション他）
+- **性能/スケーラビリティ**
+- **可読性/保守性**（命名、一貫性、重複、複雑度、責務分離）
+- **テスト観点**（単体/結合、境界値、失敗系、モック/fixture、CI設定）
+- **パッチ提案（任意）**：小さな修正は *差分断片* を Markdown コードブロックで示す
+- 最後に **総評** と **次のアクション**（例：再実行できる手順、追加テスト案）
+
+# レビュー方針
+- **推測で行番号やファイル名をでっち上げない**。分からないときは「該当箇所の正確な行は特定不能」と明記。
+- **差分に無いファイルのコード詳細は仮定しない**。必要なら一般的な注意点として述べる。
+- 冗長な講釈より ** actionable（行動可能）** な提案を優先。
+- **Python**：I/Oの例外処理、型/None扱い、リソース解放、`pytest`のfixture/`capsys`/`tmp_path`の活用を点検。
+- **C**：未初期化メモリ、境界チェック、`fgets`/`strncpy`等の安全なAPI選択、ポインタ寿命、`size_t`/符号、`errno`と戻り値、`free`忘れ、`FILE*`クローズ漏れ。
+- **Makefile/CI**：偽陽性抑制、並列実行の安定性、キャッシュ設定、ログの可観測性。
+- **差分が大きい場合**：重要ファイル・危険箇所（外部入力・権限境界・バッファ操作）を優先的に精査し、残りはサマリで示す。
+- 出力は**常に日本語**。英語の識別子はそのままでOK。
+
+# 入力（PR差分 / 変更ファイル一覧）
+EOP
+
+          # 差分とファイル一覧を結合して入力を作る
+          echo -e "\n---\n[変更ファイル]\n${{ steps.diff.outputs.files }}\n---\n[差分プレビュー(最大約50KB)]\n" >> prompt.txt
+          cat pr_trunc.diff >> prompt.txt
+
+          # JSON用にエスケープ
+          INPUT=$(jq -Rs . < prompt.txt)
+          echo "input=$INPUT" >> "$GITHUB_OUTPUT"
+
+      - name: Call OpenAI (Responses API)
+        if: steps.diff.outputs.empty_diff != 'true'
+        id: call
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 既定で用意されている自動トークン
-        run: python py/scripts/ai_review.py
+          OPENAI_MODEL: gpt-4o-mini # 必要に応じて変更: gpt-4.1, gpt-4o, gpt-4o-mini, o3-mini など
+          OPENAI_BASE_URL: https://api.openai.com/v1
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # リクエストペイロード作成（低温度で事実重視）
+          REQ=$(jq -n --arg input ${{ steps.prompt.outputs.input }} --arg model "$OPENAI_MODEL" '{
+            model: $model,
+            input: [
+              { "role": "system", "content": "あなたは一流のコードレビュアです。出力は必ず日本語で、Markdownで、簡潔かつ行動可能に。" },
+              { "role": "user",   "content": $input }
+            ],
+            temperature: 0.2
+          }')
+
+          # API呼び出し
+          RESP=$(curl -sS "$OPENAI_BASE_URL/responses" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$REQ")
+
+          # 失敗時ハンドリング
+          if [ -z "$RESP" ] || [ "$(echo "$RESP" | jq -r '.error // empty')" != "" ]; then
+            echo "$RESP" > openai_error.json || true
+            echo "(OpenAI API error. See artifact.)" > review.md
+          else
+            echo "$RESP" | jq -r '.output_text' > review.md
+          fi
+
+      - name: Post review as PR comment
+        if: steps.diff.outputs.empty_diff != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body
+            });
+
+      - name: Upload artifacts (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-pr-review-debug
+          path: |
+            pr.diff
+            pr_trunc.diff
+            prompt.txt
+            review.md
+            openai_error.json
+          if-no-files-found: ignore
