@@ -33,17 +33,23 @@ $(BIN_DIR)/play-cli: $(OBJ) $(APP_OBJ)
 src/%.o: src/%.c include/p002_utils.h
 	$(CC) $(CFLAGS) $(SAN) -c -o $@ $<
 
-# ---- Tests ----
-TEST_BIN := $(BIN_DIR)/test_all
-TEST_SRC := $(wildcard tests/test_*.c)
+# ---- Tests (split per file) ----
+# tests/test_*.c → bin/tests/test_* という “個別実行ファイル” にする
+TEST_SRC  := $(wildcard tests/test_*.c)
+TEST_BINS := $(patsubst tests/%.c,$(BIN_DIR)/tests/%,$(TEST_SRC))
 
-test: $(TEST_BIN)
-	./$(TEST_BIN)
+test: $(TEST_BINS)
+	@rc=0; \
+	for t in $(TEST_BINS); do \
+	  echo "== RUN $$t =="; \
+	  "$$t" || rc=$$?; \
+	done; \
+	exit $$rc
 
-# ★ テストは OBJ（= main.o 除外済み）＋ テストコード（= こちらに test の main がある）
-$(TEST_BIN): $(TEST_SRC) $(OBJ)
-	@mkdir -p $(BIN_DIR)
-	$(CC) $(CFLAGS) $(SAN) -o $@ $(TEST_SRC) $(OBJ) $(LDFLAGS)
+# 個別ビルドルール：各テストは OBJ（= ライブラリ群、main.oは除外済み）とリンク
+$(BIN_DIR)/tests/%: tests/%.c $(OBJ)
+	@mkdir -p $(BIN_DIR)/tests
+	$(CC) $(CFLAGS) $(SAN) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -rf $(BIN_DIR) src/*.o
