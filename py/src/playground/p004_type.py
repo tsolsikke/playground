@@ -1,4 +1,5 @@
 from typing import List
+
 """
 プリミティブ型 (004_type.py)
 
