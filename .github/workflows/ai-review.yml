@@ -128,40 +128,55 @@ jobs:
           cat pr_trunc.diff >> prompt.txt
           jq -Rs . < prompt.txt > prompt.json
 
-      - name: Call OpenAI (Responses API)
+      - name: Call OpenAI (Chat Completions)
         if: steps.diff.outputs.empty_diff != 'true'
         id: call
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: gpt-4o-mini
+          OPENAI_MODEL: gpt-4-0613   # ← ここを /v1/models の一覧にあるモデルに合わせる（例: gpt-4, gpt-4o, gpt-4o-mini など）
           OPENAI_BASE_URL: https://api.openai.com/v1
         shell: bash
         run: |
           set -euo pipefail
-          INPUT=$(jq -Rs . < prompt.txt)
+
+          # 送る本文（prompt.txt は前段で作ってある想定）
+          SYSTEM_MSG="あなたは一流のコードレビュアです。出力は必ず日本語のMarkdown、簡潔かつ行動可能に。"
+          USER_MSG=$(jq -Rs . < prompt.txt)
+
           REQ=$(jq -n \
             --arg model "$OPENAI_MODEL" \
-            --arg input "$INPUT" \
+            --arg sys "$SYSTEM_MSG" \
+            --arg usr "$USER_MSG" \
             '{
               model: $model,
-              input: [
-                { "role": "system", "content": "あなたは一流のコードレビュアです。出力は必ず日本語で、Markdown形式で、行動可能に。" },
-                { "role": "user",   "content": $input }
-              ],
-              temperature: 0.2
+              temperature: 0.2,
+              messages: [
+                { "role": "system", "content": $sys },
+                { "role": "user",   "content": $usr }
+              ]
             }')
 
-          RESP=$(curl -sS "$OPENAI_BASE_URL/responses" \
+          # ステータスコードも同時に取得
+          HTTP_RESP=$(curl -sS -w "\n%{http_code}\n" "$OPENAI_BASE_URL/chat/completions" \
             -H "Authorization: Bearer '"$OPENAI_API_KEY"'" \
             -H "Content-Type: application/json" \
             -d "$REQ" || true)
 
-          echo "$RESP" > openai_raw.json
-          OUT=$(jq -r '.output_text // empty' openai_raw.json)
-          if [ -z "$OUT" ]; then
-            echo "(OpenAI API error or empty output)" > review.md
+          HTTP_CODE=$(echo "$HTTP_RESP" | tail -n1)
+          RESP_JSON=$(echo "$HTTP_RESP" | sed '$d')
+          echo "$RESP_JSON" > openai_raw.json
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            ERR=$(jq -r '.error.message // empty' openai_raw.json)
+            [ -z "$ERR" ] && ERR="HTTP $HTTP_CODE from OpenAI"
+            echo "OpenAI API error: $ERR" > review.md
           else
-            echo "$OUT" > review.md
+            OUT=$(jq -r '.choices[0].message.content // empty' openai_raw.json)
+            if [ -z "$OUT" ]; then
+              echo "(OpenAI returned empty content)" > review.md
+            else
+              echo "$OUT" > review.md
+            fi
           fi
 
       - name: Post review as PR comment
