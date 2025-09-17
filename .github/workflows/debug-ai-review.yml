@@ -1,17 +1,54 @@
-- name: Preflight: fingerprint API key (safe)
-  env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  run: |
-    set -euo pipefail
-    if [ -z "${OPENAI_API_KEY:-}" ]; then
-      echo "::error::OPENAI_API_KEY is empty"; exit 1
-    fi
-    # 前後空白や CR を除去して整える（問題があれば警告）
-    RAWLEN=${#OPENAI_API_KEY}
-    CLEAN=$(printf "%s" "$OPENAI_API_KEY" | tr -d '\r' | sed -e 's/^ *//' -e 's/ *$//')
-    CLEANLEN=${#CLEAN}
-    if [ "$RAWLEN" -ne "$CLEANLEN" ]; then
-      echo "::warning::OPENAI_API_KEY had surrounding spaces or CR; trimmed for use."
-    fi
-    echo -n "Key prefix: "; printf "%s" "$CLEAN" | cut -c1-10; echo "********"
-    echo -n "Key sha256: "; printf "%s" "$CLEAN" | sha256sum | cut -c1-12
+name: Check OPENAI_API_KEY
+
+on:
+  workflow_dispatch:  # 手動実行できるようにする
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_PROJECT: ${{ secrets.OPENAI_PROJECT_ID }} # プロジェクトキーを使う場合のみ設定
+
+    steps:
+      - name: Show env (masked & fingerprint)
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY is empty"
+            exit 1
+          fi
+
+          RAWLEN=${#OPENAI_API_KEY}
+          CLEAN=$(printf "%s" "$OPENAI_API_KEY" | tr -d '\r' | sed -e 's/^ *//' -e 's/ *$//')
+          CLEANLEN=${#CLEAN}
+          if [ "$RAWLEN" -ne "$CLEANLEN" ]; then
+            echo "::warning::OPENAI_API_KEY had surrounding spaces or CR; trimmed for use."
+          fi
+
+          echo "OPENAI_API_KEY is set (masked in logs)"
+          echo -n "Key prefix: "
+          printf "%s" "$CLEAN" | cut -c1-10
+          echo "********"
+          echo -n "Key sha256: "
+          printf "%s" "$CLEAN" | sha256sum | cut -c1-12
+
+      - name: Call OpenAI API (list models)
+        run: |
+          set -euo pipefail
+
+          HEADERS=(-H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json")
+          if [ -n "${OPENAI_PROJECT:-}" ]; then
+            HEADERS+=(-H "OpenAI-Project: $OPENAI_PROJECT")
+          fi
+
+          code=$(curl -s -o result.json -w "%{http_code}" https://api.openai.com/v1/models "${HEADERS[@]}" || true)
+
+          echo "Response status: $code"
+          echo "First part of JSON body:"
+          head -c 400 result.json || true
+
+          if [ "$code" != "200" ]; then
+            echo "::error::API key seems invalid or project header missing"
+            exit 1
+          fi
