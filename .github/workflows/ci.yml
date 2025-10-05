@@ -81,30 +81,42 @@ jobs:
 
   go:
     name: Go (test)
-    # go/ 配下に何かあるときだけ実行（古いコミットで go が無い場合に備える）
-    if: ${{ hashFiles('go/**') != '' }}
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: go
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # go/ の存在を判定してフラグ出力
+      - name: Check go/ exists
+        id: check_go
+        run: |
+          if [ -d "${GITHUB_WORKSPACE}/go" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: steps.check_go.outputs.exists == 'true'
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25.1'
+          go-version: '1.25.1'    # go.mod に合わせて変更可
           cache: true
 
       - name: Go test
+        if: steps.check_go.outputs.exists == 'true'
+        working-directory: go
         run: go test ./... -v
 
       # （任意）カバレッジを artifact に残す
       - name: Coverage (optional)
+        if: steps.check_go.outputs.exists == 'true'
+        working-directory: go
         run: go test ./... -coverprofile=cover.out
+
       - name: Upload Go coverage (optional)
-        if: always()
+        if: steps.check_go.outputs.exists == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
           name: go-coverage
-          path: cover.out
+          path: go/cover.out
           if-no-files-found: ignore
