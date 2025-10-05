@@ -58,7 +58,6 @@ jobs:
           echo "== git ls-tree HEAD =="
           git ls-tree --name-only HEAD
 
-      # ここで存在確認。なければ早期終了してログを見やすく
       - name: Ensure c/ exists
         run: |
           if [ ! -d "$GITHUB_WORKSPACE/c" ]; then
@@ -78,4 +77,34 @@ jobs:
         with:
           name: c-results
           path: ${{ github.workspace }}/data/results/**
+          if-no-files-found: ignore
+
+  go:
+    name: Go (test)
+    # go/ 配下に何かあるときだけ実行（古いコミットで go が無い場合に備える）
+    if: ${{ hashFiles('go/**') != '' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.1'
+          cache: true
+
+      - name: Go test
+        run: go test ./... -v
+
+      # （任意）カバレッジを artifact に残す
+      - name: Coverage (optional)
+        run: go test ./... -coverprofile=cover.out
+      - name: Upload Go coverage (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: cover.out
           if-no-files-found: ignore
